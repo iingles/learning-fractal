@@ -54,6 +54,10 @@ impl FractalMind {
         self.current_coord = contextual_mandelbrot_coord(base_coord, &context, 0.7 * intensity);
 
         self.learn_concept_with_intensity(input, intensity);
+
+        // Decay unused symbols (synaptic pruning)
+        self.decay_symbols();
+
         self.generate_response(input)
     }
 
@@ -129,7 +133,7 @@ impl FractalMind {
     }
 
     fn store_symbol_at_coord(&mut self, coord: MandelbrotCoord, ch: char) -> usize {
-        const MERGE_THRESHOLD: u32 = 20; 
+        const MERGE_THRESHOLD: u32 = 8;
 
         let pattern = julia_fingerprint_from_mandelbrot(coord, self.scale);
         let stability = mandelbrot_stability(coord, self.scale);
@@ -147,7 +151,7 @@ impl FractalMind {
             // Merge similar patterns - character label is just metadata
             if distance < MERGE_THRESHOLD {
                 symbol.count += 1;
-                symbol.confidence = (symbol.confidence + 0.1).min(1.0);
+                symbol.confidence = (symbol.confidence + 0.15).min(1.0);
                 // Keep first label or update if unlabeled
                 if symbol.label.is_none() {
                     symbol.label = Some(ch);
@@ -242,11 +246,15 @@ impl FractalMind {
             }
 
             if let Some((next_coord, sym_idx)) = chosen {
-                if let Some(ch) = self.symbols[sym_idx].label {
-                    response.push(ch);
-                    current_coord = next_coord;
+                if sym_idx < self.symbols.len() {
+                    if let Some(ch) = self.symbols[sym_idx].label {
+                        response.push(ch);
+                        current_coord = next_coord;
 
-                    if matches!(ch, '.' | '!' | '?') && response.len() > 5 {
+                        if matches!(ch, '.' | '!' | '?') && response.len() > 5 {
+                            break;
+                        }
+                    } else {
                         break;
                     }
                 } else {
@@ -316,6 +324,57 @@ impl FractalMind {
         }
 
         best_idx
+    }
+
+    fn decay_symbols(&mut self) {
+        // Gradually decay confidence of all symbols (synaptic pruning)
+        const DECAY_RATE: f32 = 0.001;
+        const MIN_CONFIDENCE: f32 = 0.05;
+
+        for symbol in &mut self.symbols {
+            symbol.confidence = (symbol.confidence - DECAY_RATE).max(0.0);
+        }
+
+        // Mark symbols that are referenced by trajectories (can't be pruned)
+        let mut referenced = vec![false; self.symbols.len()];
+        for traj in &self.trajectories {
+            for &sym_idx in &traj.symbols {
+                if sym_idx < referenced.len() {
+                    referenced[sym_idx] = true;
+                }
+            }
+        }
+
+        // Remove symbols that have decayed below threshold, aren't referenced, and haven't been used much
+        let mut new_symbols = Vec::new();
+        let mut index_map = vec![0; self.symbols.len()];
+
+        for (old_idx, symbol) in self.symbols.iter().enumerate() {
+            if symbol.confidence > MIN_CONFIDENCE || symbol.count > 10 || referenced[old_idx] {
+                index_map[old_idx] = new_symbols.len();
+                new_symbols.push(symbol.clone());
+            }
+        }
+
+        // Update trajectory indices to match new symbol positions
+        for traj in &mut self.trajectories {
+            traj.symbols = traj.symbols.iter()
+                .filter_map(|&old_idx| {
+                    if old_idx < index_map.len() && old_idx < self.symbols.len() {
+                        let new_idx = index_map[old_idx];
+                        if new_idx < new_symbols.len() {
+                            Some(new_idx)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
+
+        self.symbols = new_symbols;
     }
 
     pub fn display_state(&self) {
