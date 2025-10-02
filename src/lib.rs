@@ -4,6 +4,9 @@ pub mod memory;
 pub mod mind;
 pub mod llm;
 pub mod visualizer;
+pub mod camera;
+pub mod audio;
+pub mod image;
 
 pub use math::{C, Param, param_to_c};
 pub use fractal::{
@@ -15,3 +18,8 @@ pub use memory::{FractalSymbol, ConceptTrajectory, AssociativeField};
 pub use mind::FractalMind;
 pub use llm::LLMBridge;
 pub use visualizer::spawn_visualizer;
+
+// Sensory input encoders
+pub use camera::{CameraEncoder, FrameEncoding};
+pub use audio::{AudioEncoder, AudioEncoding};
+pub use image::{encode_image, encode_image_data, ImageEncoding};

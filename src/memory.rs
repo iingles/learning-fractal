@@ -28,15 +28,29 @@ impl FractalSymbol {
 pub struct ConceptTrajectory {
     pub path: Vec<MandelbrotCoord>,
     pub strength: f64,
-    pub symbols: Vec<usize>,
+    pub symbols: Vec<usize>,  // Indices into fractal symbol space (geometric patterns, not strings)
+    pub image_path: Option<String>,  // Only for visual recall - path to source image
+    // NO STRING STORAGE - emergence from geometry alone
 }
 
 impl ConceptTrajectory {
     pub fn new(path: Vec<MandelbrotCoord>, _concept: String, symbols: Vec<usize>) -> Self {
+        // Concept string is discarded - only geometric patterns matter
         ConceptTrajectory {
             path,
             strength: 1.0,
             symbols,
+            image_path: None,
+        }
+    }
+
+    pub fn new_with_image(path: Vec<MandelbrotCoord>, _concept: String, symbols: Vec<usize>, image_path: String) -> Self {
+        // Concept string is discarded - only geometric patterns + image reference matter
+        ConceptTrajectory {
+            path,
+            strength: 1.0,
+            symbols,
+            image_path: Some(image_path),
         }
     }
 

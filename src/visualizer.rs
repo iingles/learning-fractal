@@ -68,11 +68,22 @@ fn draw_text(buffer: &mut [u32], x: usize, y: usize, text: &str, color: u32) {
 
 pub fn spawn_visualizer(mind: Arc<Mutex<FractalMind>>) {
     thread::spawn(move || {
+        let opts = WindowOptions {
+            borderless: false,
+            title: true,
+            resize: true,
+            scale: minifb::Scale::X1,
+            scale_mode: minifb::ScaleMode::Stretch,
+            topmost: false,
+            transparency: false,
+            none: false,
+        };
+
         let mut window = Window::new(
             "Fractal Mind — Live Julia Set",
             WIDTH,
             HEIGHT,
-            WindowOptions::default(),
+            opts,
         ).unwrap();
 
         window.set_target_fps(30);
@@ -80,7 +91,7 @@ pub fn spawn_visualizer(mind: Arc<Mutex<FractalMind>>) {
         let mut buffer: Vec<u32> = vec![0; WIDTH * HEIGHT];
 
         while window.is_open() && !window.is_key_down(Key::Escape) {
-            let (cx, cy, symbols, trajectories, fields) = {
+            let (cx, cy, symbols, trajectories, fields, last_output) = {
                 let mind = mind.lock().unwrap();
                 (
                     mind.current_coord.re,
@@ -88,6 +99,7 @@ pub fn spawn_visualizer(mind: Arc<Mutex<FractalMind>>) {
                     mind.symbols.len(),
                     mind.trajectories.len(),
                     mind.associative_fields.len(),
+                    mind.last_output.clone(),
                 )
             };
 
@@ -100,6 +112,16 @@ pub fn spawn_visualizer(mind: Arc<Mutex<FractalMind>>) {
             draw_text(&mut buffer, 10, 25, &format!("symbols: {}", symbols), text_color);
             draw_text(&mut buffer, 10, 40, &format!("trajectories: {}", trajectories), text_color);
             draw_text(&mut buffer, 10, 55, &format!("fields: {}", fields), text_color);
+
+            // Draw last output at bottom
+            if !last_output.is_empty() {
+                let truncated = if last_output.len() > 60 {
+                    format!("{}...", &last_output[..57])
+                } else {
+                    last_output
+                };
+                draw_text(&mut buffer, 10, HEIGHT - 20, &truncated, 0xFFFF00);
+            }
 
             window.update_with_buffer(&buffer, WIDTH, HEIGHT).unwrap();
         }

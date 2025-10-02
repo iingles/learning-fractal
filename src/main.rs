@@ -3,7 +3,12 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use version_004::{FractalMind, LLMBridge, spawn_visualizer};
+use version_004::{
+    FractalMind, LLMBridge, spawn_visualizer,
+    CameraEncoder, FrameEncoding,
+    AudioEncoder, AudioEncoding,
+    encode_image, ImageEncoding
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,6 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ /train <rounds>  - train mind with LLM  │");
     println!("│ /read              - ingest text file    │");
     println!("│ /dream             - toggle LLM dreams   │");
+    println!("│ /camera            - train from camera   │");
+    println!("│ /audio             - train from audio    │");
+    println!("│ /image <path>      - train from image    │");
+    println!("│ /images            - batch process dir   │");
+    println!("│ /learn             - supervised learning │");
+    println!("│ /imagine           - visualize concept   │");
     println!("│                                          │");
     println!("│ (background thought always active)       │");
     println!("╰──────────────────────────────────────────╯\n");
@@ -57,31 +68,119 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("{} LLM-guided dreaming\n", if !current { "🌙 enabled" } else { "💤 disabled" });
                 continue;
             }
-            "/read" => {
-                print!("path (file or directory): ");
+            "/imagine" => {
+                print!("concept (what should I recall?): ");
                 io::stdout().flush()?;
-                let mut path = String::new();
-                io::stdin().read_line(&mut path)?;
-                let path = path.trim();
+                let mut concept = String::new();
+                io::stdin().read_line(&mut concept)?;
+                let concept = concept.trim();
 
-                if !std::path::Path::new(path).exists() {
-                    println!("error: path does not exist: {}\n", path);
+                if concept.is_empty() {
+                    println!("cancelled\n");
                     continue;
                 }
 
-                let paths = if std::path::Path::new(path).is_dir() {
-                    // Walk directory recursively
-                    walkdir::WalkDir::new(path)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().is_file())
-                        .map(|e| e.path().to_path_buf())
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![std::path::PathBuf::from(path)]
-                };
+                println!("\n💭 recalling images related to '{}'...\n", concept);
 
-                println!("\n📖 reading {} file(s)...\n", paths.len());
+                let recalled = mind.lock().unwrap().recall_images(concept, 5);
+
+                if recalled.is_empty() {
+                    println!("No images found near '{}' in fractal memory.\n", concept);
+                    println!("Try using /learn to teach me what this concept looks like.\n");
+                } else {
+                    println!("Found {} image(s):\n", recalled.len());
+                    for (i, path) in recalled.iter().enumerate() {
+                        println!("{}. {}", i+1, path);
+
+                        // Open in viewer (WSL-compatible)
+                        let _ = std::process::Command::new("wslview")
+                            .arg(path)
+                            .spawn();
+                    }
+                    println!();
+                }
+                continue;
+            }
+            "/camera" => {
+                println!("\n📷 starting camera feed training (press Ctrl+C to stop)...\n");
+
+                match CameraEncoder::new(FrameEncoding::EdgeSymbols) {
+                    Ok(mut encoder) => {
+                        println!("camera initialized - feeding edge patterns to fractal mind\n");
+
+                        for i in 0..100 {  // 100 frames
+                            match encoder.capture_frame() {
+                                Ok(encoded) => {
+                                    mind.lock().unwrap().process_with_intensity(&encoded, 0.2);
+                                    println!("[{}] processed frame ({} bytes)", i+1, encoded.len());
+                                    std::thread::sleep(Duration::from_millis(100));
+                                }
+                                Err(e) => {
+                                    println!("frame capture error: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        println!("\n✓ camera training complete\n");
+                        mind.lock().unwrap().save("mind_state.bin")?;
+                    }
+                    Err(e) => println!("camera error: {}\n", e),
+                }
+                continue;
+            }
+            "/audio" => {
+                println!("\n🎤 starting audio feed training (10 seconds)...\n");
+
+                match AudioEncoder::new(AudioEncoding::BandSymbols { bands: 8 }) {
+                    Ok(encoder) => {
+                        println!("audio initialized - feeding frequency bands to fractal mind\n");
+
+                        for i in 0..100 {  // 10 seconds at 100ms intervals
+                            let encoded = encoder.encode_current();
+                            mind.lock().unwrap().process_with_intensity(&encoded, 0.15);
+                            println!("[{}] {}", i+1, &encoded[..40.min(encoded.len())]);
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+
+                        println!("\n✓ audio training complete\n");
+                        mind.lock().unwrap().save("mind_state.bin")?;
+                    }
+                    Err(e) => println!("audio error: {}\n", e),
+                }
+                continue;
+            }
+            "/read" => {
+                let base_path = "data";
+
+                if !std::path::Path::new(base_path).exists() {
+                    println!("error: data/ directory does not exist\n");
+                    continue;
+                }
+
+                // Process folders 00-07 in order (easiest to hardest)
+                let mut all_paths = Vec::new();
+                for i in 0..8 {
+                    let folder = format!("{}/{:02}", base_path, i);
+                    if std::path::Path::new(&folder).exists() {
+                        let mut folder_paths: Vec<_> = walkdir::WalkDir::new(&folder)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().is_file())
+                            .map(|e| e.path().to_path_buf())
+                            .collect();
+                        folder_paths.sort(); // Sort within folder
+                        all_paths.extend(folder_paths);
+                    }
+                }
+
+                if all_paths.is_empty() {
+                    println!("no files found in data/00 through data/07\n");
+                    continue;
+                }
+
+                println!("\n📖 reading {} file(s) from data/00-07 (easiest→hardest)...\n", all_paths.len());
+
+                let paths = all_paths;
 
                 for (i, file_path) in paths.iter().enumerate() {
                     match std::fs::read_to_string(file_path) {
@@ -113,10 +212,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
 
-                            // Auto-save every 10 files
-                            if (i + 1) % 10 == 0 {
-                                let _ = mind.lock().unwrap().save("mind_state.bin");
-                            }
+                            // Save after every file
+                            let _ = mind.lock().unwrap().save("mind_state.bin");
                         }
                         Err(e) => println!("[{}/{}] error: {}", i+1, paths.len(), e),
                     }
@@ -136,6 +233,154 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             _ => {
+                if input.starts_with("/image") {
+                    let path = input.split_whitespace()
+                        .nth(1)
+                        .unwrap_or("");
+
+                    if path.is_empty() {
+                        println!("usage: /image <path>\n");
+                        continue;
+                    }
+
+                    println!("\n🖼️  processing image: {}\n", path);
+
+                    match encode_image(path, ImageEncoding::EdgeAscii { width: 40, height: 40 }) {
+                        Ok(encoded) => {
+                            mind.lock().unwrap().process_with_intensity(&encoded, 0.3);
+                            println!("✓ image encoded and processed ({} bytes)\n", encoded.len());
+                            mind.lock().unwrap().save("mind_state.bin")?;
+                        }
+                        Err(e) => println!("image error: {}\n", e),
+                    }
+                    continue;
+                }
+
+                if input.starts_with("/images") {
+                    let dir_path = "images";
+
+                    if !std::path::Path::new(dir_path).exists() {
+                        println!("error: path does not exist: {}\n", dir_path);
+                        continue;
+                    }
+
+                    let image_exts = ["jpg", "jpeg", "png", "gif", "bmp", "webp"];
+                    let mut image_paths = Vec::new();
+
+                    for entry in walkdir::WalkDir::new(dir_path)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().is_file())
+                    {
+                        if let Some(ext) = entry.path().extension() {
+                            if image_exts.contains(&ext.to_str().unwrap_or("").to_lowercase().as_str()) {
+                                image_paths.push(entry.path().to_path_buf());
+                            }
+                        }
+                    }
+
+                    println!("\n📸 found {} images\n", image_paths.len());
+
+                    for (i, img_path) in image_paths.iter().enumerate() {
+                        match encode_image(img_path, ImageEncoding::EdgeAscii { width: 40, height: 40 }) {
+                            Ok(encoded) => {
+                                println!("[{}/{}] {}", i+1, image_paths.len(), img_path.display());
+                                mind.lock().unwrap().process_with_intensity(&encoded, 0.2);
+
+                                if (i + 1) % 10 == 0 {
+                                    let _ = mind.lock().unwrap().save("mind_state.bin");
+                                }
+                            }
+                            Err(e) => println!("[{}/{}] error: {}", i+1, image_paths.len(), e),
+                        }
+                    }
+
+                    println!("\n✓ processed {} images\n", image_paths.len());
+                    mind.lock().unwrap().save("mind_state.bin")?;
+                    continue;
+                }
+
+                if input.starts_with("/learn") {
+                    let dir_path = "images";
+
+                    if !std::path::Path::new(dir_path).exists() {
+                        println!("error: path does not exist: {}\n", dir_path);
+                        continue;
+                    }
+
+                    let image_exts = ["jpg", "jpeg", "png", "gif", "bmp", "webp"];
+                    let mut image_paths = Vec::new();
+
+                    for entry in walkdir::WalkDir::new(dir_path)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().is_file())
+                    {
+                        if let Some(ext) = entry.path().extension() {
+                            if image_exts.contains(&ext.to_str().unwrap_or("").to_lowercase().as_str()) {
+                                image_paths.push(entry.path().to_path_buf());
+                            }
+                        }
+                    }
+
+                    println!("\n🎓 interactive learning - {} images", image_paths.len());
+                    println!("I'll show you each image. You tell me what it is.\n");
+                    println!("Commands: <label>, 'skip', 'quit'\n");
+
+                    for (i, img_path) in image_paths.iter().enumerate() {
+                        println!("\n[{}/{}]", i+1, image_paths.len());
+                        println!("Opening: {}", img_path.display());
+
+                        // Open image using wslview (WSL utility for opening files in Windows)
+                        if let Err(e) = std::process::Command::new("wslview").arg(&img_path).spawn() {
+                            println!("couldn't open image (install wslu: sudo apt install wslu): {}", e);
+                            println!("Please open manually: {}\n", img_path.display());
+                        }
+
+                        // Encode visual pattern while user looks at image
+                        match encode_image(&img_path, ImageEncoding::EdgeAscii { width: 60, height: 40 }) {
+                            Ok(encoded) => {
+                                // Process visual pattern (low intensity, just sensing)
+                                mind.lock().unwrap().process_with_intensity(&encoded, 0.15);
+
+                                // Mind tries to guess from fractal space
+                                let guess = mind.lock().unwrap().process_input("what is this");
+                                println!("\nmind's guess: {}", guess);
+
+                                print!("\nyou (what is this?): ");
+                                io::stdout().flush()?;
+                                let mut label = String::new();
+                                io::stdin().read_line(&mut label)?;
+                                let label = label.trim();
+
+                                if label.is_empty() || label == "skip" {
+                                    println!("skipped\n");
+                                    continue;
+                                }
+                                if label == "quit" {
+                                    break;
+                                }
+
+                                // Learn: visual pattern + semantic label together (high intensity)
+                                // Store image path with the trajectory
+                                let combined = format!("{}\n{}", encoded, label);
+                                mind.lock().unwrap().learn_concept_with_image(&combined, 0.8, img_path.to_string_lossy().to_string());
+
+                                println!("✓ learned: {}\n", label);
+
+                                if (i + 1) % 5 == 0 {
+                                    let _ = mind.lock().unwrap().save("mind_state.bin");
+                                }
+                            }
+                            Err(e) => println!("encoding error: {}", e),
+                        }
+                    }
+
+                    println!("\n✓ learning session complete\n");
+                    mind.lock().unwrap().save("mind_state.bin")?;
+                    continue;
+                }
+
                 if input.starts_with("/train") {
                     let rounds: usize = input.split_whitespace()
                         .nth(1)
@@ -181,9 +426,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Normal interaction: high intensity input
         let response = mind.lock().unwrap().process_input(input); // intensity = 1.0
 
-        // Response has medium intensity for self-learning
-        mind.lock().unwrap().process_with_intensity(&response, 0.5);
-
         println!("mind: {}\n", response);
 
         let should_save = {
@@ -207,17 +449,20 @@ fn spawn_background_thought(
 ) {
     tokio::spawn(async move {
         let mut iteration = 0;
-        let mut last_thought = String::from("...");
 
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             iteration += 1;
 
-            // Always processing: output becomes input (low intensity background thought)
+            // Background thought generation:
+            // Context-influenced but weaker association than conscious responses
+            // Wanders through fractal space based on recent context + associations
             let thought = {
                 if let Ok(mut m) = mind.try_lock() {
-                    m.process_with_intensity(&last_thought, 0.1)
+                    // Generate thought from current context (no input string needed)
+                    // Uses context_history and current_coord to wander associatively
+                    m.generate_background_thought()
                 } else {
                     // Mind busy, skip this cycle
                     continue;
@@ -228,12 +473,22 @@ fn spawn_background_thought(
             if dreaming.load(Ordering::Relaxed) && iteration % 20 == 0 {
                 if let Ok(guidance) = llm.translate_symbols(&thought, "dreaming").await {
                     println!("\n💭 dream: {}\n", &guidance[..60.min(guidance.len())]);
-                    last_thought = guidance;
+
+                    // Feed LLM guidance back in as low-intensity learning
+                    if let Ok(mut m) = mind.try_lock() {
+                        m.process_with_intensity(&guidance, 0.1);
+                    }
                 } else {
-                    last_thought = thought;
+                    // Feed thought back as low-intensity learning
+                    if let Ok(mut m) = mind.try_lock() {
+                        m.process_with_intensity(&thought, 0.1);
+                    }
                 }
             } else {
-                last_thought = thought;
+                // Feed thought back as very low-intensity learning
+                if let Ok(mut m) = mind.try_lock() {
+                    m.process_with_intensity(&thought, 0.05);
+                }
             }
 
             // Auto-save every 100 background iterations
